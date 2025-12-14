@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync"
 
 	"github.com/hashicorp/yamux"
 )
@@ -168,7 +169,35 @@ func handleClientStream(stream net.Conn) {
 		return
 	}
 
-	// 在目标连接和流之间转发数据
-	go io.Copy(targetConn, stream)
-	io.Copy(stream, targetConn)
+	// 使用缓冲提高性能
+	copyBuf := make([]byte, 32*1024)
+
+	// 使用WaitGroup等待两个方向的数据传输完成
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	// 从stream到targetConn的全双工传输
+	go func() {
+		defer wg.Done()
+		_, err := io.CopyBuffer(targetConn, stream, copyBuf)
+		if err != nil && err != io.EOF {
+			log.Printf("从stream到targetConn传输数据失败: %v", err)
+		}
+		// 关闭目标连接的写入端，触发另一端的EOF
+		if tcpConn, ok := targetConn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
+	}()
+
+	// 从targetConn到stream的全双工传输
+	go func() {
+		defer wg.Done()
+		_, err := io.CopyBuffer(stream, targetConn, copyBuf)
+		if err != nil && err != io.EOF {
+			log.Printf("从targetConn到stream传输数据失败: %v", err)
+		}
+	}()
+
+	// 等待两个方向的数据传输都完成
+	wg.Wait()
 }
