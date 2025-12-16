@@ -38,7 +38,4 @@ func init() {
 	ServerCmd.Flags().StringVarP(&bindAddr, "bind", "b", "0.0.0.0:23336", "服务器绑定地址 (格式: host:port)")
 	ServerCmd.Flags().BoolVarP(&serverDebugMode, "debug", "d", false, "开启调试模式")
 	ServerCmd.Flags().IntVarP(&serverTimeout, "timeout", "t", 10, "超时时间（秒）")
-
-	// 添加到根命令
-	rootCmd.AddCommand(ServerCmd)
 }

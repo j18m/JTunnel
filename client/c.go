@@ -147,7 +147,7 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	// 读取地址类型
 	debugLog("开始读取地址类型")
 	buf := make([]byte, 1)
-	_, err := stream.Read(buf)
+	_, err := io.ReadFull(stream, buf)
 	if err != nil {
 		debugLog("读取地址类型失败: %v", err)
 		log.Printf("读取地址类型失败: %v", err)

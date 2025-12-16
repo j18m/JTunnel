@@ -76,7 +76,4 @@ func init() {
 	NodeCmd.Flags().StringVarP(&nodePassword, "password", "p", "", "认证密码")
 	NodeCmd.Flags().BoolVarP(&nodeDebugMode, "debug", "d", false, "开启调试模式")
 	NodeCmd.Flags().IntVarP(&nodeTimeout, "timeout", "t", 10, "超时时间（秒）")
-
-	// 添加到根命令
-	rootCmd.AddCommand(NodeCmd)
 }
