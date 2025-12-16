@@ -79,9 +79,6 @@ func StartClient(serverAddr string, socksPort int, username, password string, de
 	defer conn.Close()
 	debugLog("已连接到服务器/端点: %s", serverAddr)
 
-	log.Printf("已连接到服务器/端点: %s", serverAddr)
-	log.Printf("当前节点将作为最终端点，负责发起实际网络请求")
-
 	// 创建yamux会话，增加超时时间
 	debugLog("开始创建yamux会话")
 	yamuxConfig := yamux.DefaultConfig()
@@ -119,8 +116,6 @@ func StartClient(serverAddr string, socksPort int, username, password string, de
 	}
 	debugLog("SOCKS5配置发送成功")
 
-	log.Printf("已发送 SOCKS5 配置: 端口=%d", socksPort)
-
 	// 等待并处理来自服务器的连接请求
 	debugLog("开始等待服务器连接请求")
 	for {
@@ -142,7 +137,6 @@ func StartClient(serverAddr string, socksPort int, username, password string, de
 func handleClientStream(stream net.Conn, debugLog func(format string, args ...interface{}), timeout int) {
 	defer stream.Close()
 	debugLog("客户端收到新的流请求")
-	log.Printf("客户端收到新的流请求")
 
 	// 读取地址类型
 	debugLog("开始读取地址类型")
@@ -155,7 +149,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	}
 	addrType := buf[0]
 	debugLog("收到地址类型: %d", addrType)
-	log.Printf("收到地址类型: %d", addrType)
 
 	var targetAddr string
 
@@ -172,7 +165,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 		}
 		targetAddr = fmt.Sprintf("%d.%d.%d.%d", ipBuf[0], ipBuf[1], ipBuf[2], ipBuf[3])
 		debugLog("解析IPv4地址: %s", targetAddr)
-		log.Printf("解析IPv4地址: %s", targetAddr)
 	case 0x03: // 域名
 		// 读取域名长度
 		debugLog("开始读取域名长度")
@@ -185,7 +177,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 		}
 		domainLen := int(lenBuf[0])
 		debugLog("域名长度: %d", domainLen)
-		log.Printf("域名长度: %d", domainLen)
 
 		// 读取域名
 		debugLog("开始读取域名")
@@ -198,7 +189,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 		}
 		targetAddr = string(domainBuf)
 		debugLog("解析域名: %s", targetAddr)
-		log.Printf("解析域名: %s", targetAddr)
 	default:
 		debugLog("不支持的地址类型: %d", addrType)
 		log.Printf("不支持的地址类型: %d", addrType)
@@ -216,12 +206,10 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	}
 	port := int(portBuf[0])<<8 + int(portBuf[1])
 	debugLog("解析端口: %d", port)
-	log.Printf("解析端口: %d", port)
 
 	// 组合完整的目标地址
 	fullTargetAddr := fmt.Sprintf("%s:%d", targetAddr, port)
 	debugLog("完整目标地址: %s", fullTargetAddr)
-	log.Printf("完整目标地址: %s", fullTargetAddr)
 
 	// 连接到目标地址
 	debugLog("开始连接目标地址: %s，超时时间: %d秒", fullTargetAddr, timeout)
@@ -233,7 +221,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	}
 	defer targetConn.Close()
 	debugLog("成功连接到目标地址: %s", fullTargetAddr)
-	log.Printf("成功连接到目标地址: %s", fullTargetAddr)
 
 	// 向服务端发送连接成功确认
 	debugLog("开始发送连接成功确认")
@@ -244,7 +231,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 		return
 	}
 	debugLog("已发送连接成功确认")
-	log.Printf("已发送连接成功确认")
 
 	// 使用缓冲提高性能
 	debugLog("开始全双工数据传输")
