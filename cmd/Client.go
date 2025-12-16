@@ -14,6 +14,9 @@ var (
 	socksPort  int    // 本地SOCKS5代理端口
 	username   string // 认证用户名
 	password   string // 认证密码
+	nodeType   string // 节点类型: client或endpoint
+	debugMode  bool   // 调试模式
+	timeout    int    // 超时时间（秒）
 )
 
 // ClientCmd 表示客户端命令
@@ -37,7 +40,7 @@ var ClientCmd = &cobra.Command{
 		fmt.Printf("启动客户端连接到服务器: %s\n", serverAddr)
 
 		// 启动客户端
-		client.StartClient(serverAddr, socksPort, username, password)
+		client.StartClient(serverAddr, socksPort, username, password, debugMode, timeout)
 	},
 }
 
@@ -47,11 +50,11 @@ func init() {
 	ClientCmd.Flags().IntVarP(&socksPort, "socks-port", "l", 0, "本地SOCKS5代理端口")
 	ClientCmd.Flags().StringVarP(&username, "username", "u", "", "认证用户名")
 	ClientCmd.Flags().StringVarP(&password, "password", "p", "", "认证密码")
+	ClientCmd.Flags().StringVarP(&nodeType, "node", "n", "client", "节点类型: client或endpoint")
+	ClientCmd.Flags().BoolVarP(&debugMode, "debug", "d", false, "开启调试模式")
+	ClientCmd.Flags().IntVarP(&timeout, "timeout", "t", 10, "超时时间（秒）")
 
 	// 标记必需参数
 	ClientCmd.MarkFlagRequired("server")
 	ClientCmd.MarkFlagRequired("socks-port")
-
-	// 添加到根命令
-	rootCmd.AddCommand(ClientCmd)
 }

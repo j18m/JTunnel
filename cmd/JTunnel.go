@@ -2,8 +2,9 @@ package cmd
 
 import (
 	"fmt"
-	"github.com/spf13/cobra"
 	"os"
+
+	"github.com/spf13/cobra"
 )
 
 var rootCmd = &cobra.Command{
@@ -20,5 +21,15 @@ func RunJtunnel() {
 }
 
 func init() {
+	// 添加服务器命令
+	rootCmd.AddCommand(ServerCmd)
 
+	// 添加客户端命令
+	rootCmd.AddCommand(ClientCmd)
+
+	// 添加端点命令
+	rootCmd.AddCommand(RelayCmd)
+
+	// 添加节点命令
+	rootCmd.AddCommand(NodeCmd)
 }
