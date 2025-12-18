@@ -190,11 +190,6 @@ func handleRelayConnection(conn *tls.Conn, nextAddr string, tlsConfig *tls.Confi
 		return
 	}
 	nextConn := tls.Client(tcpConn, tlsConfig)
-	if err != nil {
-		debugLog("连接下一个节点失败: %v", err)
-		log.Printf("连接下一个节点失败: %v", err)
-		return
-	}
 	defer nextConn.Close()
 	debugLog("已连接到下一个节点: %s", nextAddr)
 
