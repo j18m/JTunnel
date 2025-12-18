@@ -29,7 +29,4 @@ func init() {
 
 	// 添加端点命令
 	rootCmd.AddCommand(RelayCmd)
-
-	// 添加节点命令
-	rootCmd.AddCommand(NodeCmd)
 }
