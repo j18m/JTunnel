@@ -129,6 +129,9 @@ func StartRelay(listenAddr string, nextAddr string, debugMode bool, timeout int)
 		Certificates:       []tls.Certificate{clientCert},
 		RootCAs:            certPool, // 信任客户端和服务器证书
 		InsecureSkipVerify: true,
+		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			return verifyPeerCertificate(rawCerts, certPool)
+		},
 	}
 	debugLog("客户端TLS配置完成")
 
@@ -156,6 +159,18 @@ func StartRelay(listenAddr string, nextAddr string, debugMode bool, timeout int)
 
 		go handleRelayConnection(conn.(*tls.Conn), nextAddr, clientTLSConfig, debugLog, timeout)
 	}
+}
+
+func verifyPeerCertificate(rawCerts [][]byte, roots *x509.CertPool) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("peer did not provide a certificate")
+	}
+	cert, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return err
+	}
+	_, err = cert.Verify(x509.VerifyOptions{Roots: roots})
+	return err
 }
 
 func handleRelayConnection(conn *tls.Conn, nextAddr string, tlsConfig *tls.Config, debugLog func(format string, args ...interface{}), timeout int) {

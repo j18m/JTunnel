@@ -21,7 +21,7 @@ type Socks5Config struct {
 	Password string `json:"password"`
 }
 
-func StartClient(serverAddr string, socksPort int, username, password string, debugMode bool, timeout int) error {
+func StartClient(serverAddr string, socksListenAddr string, username, password string, debugMode bool, timeout int) error {
 	// 日志输出函数
 	debugLog := func(format string, args ...interface{}) {
 		if debugMode {
@@ -34,6 +34,14 @@ func StartClient(serverAddr string, socksPort int, username, password string, de
 	if serverAddr == "" {
 		debugLog("服务器地址不能为空")
 		return fmt.Errorf("必须指定服务器地址")
+	}
+	_, portStr, err := net.SplitHostPort(socksListenAddr)
+	if err != nil {
+		return fmt.Errorf("本地SOCKS5监听地址无效: %w", err)
+	}
+	socksPort, err := net.LookupPort("tcp", portStr)
+	if err != nil {
+		return fmt.Errorf("本地SOCKS5监听端口无效: %w", err)
 	}
 
 	// 加载客户端证书和服务器证书到证书池
@@ -62,6 +70,9 @@ func StartClient(serverAddr string, socksPort int, username, password string, de
 		Certificates:       []tls.Certificate{clientCert},
 		RootCAs:            certPool, // 信任客户端和服务器证书
 		InsecureSkipVerify: true,
+		VerifyPeerCertificate: func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
+			return verifyPeerCertificate(rawCerts, certPool)
+		},
 	}
 
 	// 设置连接超时
@@ -118,12 +129,12 @@ func StartClient(serverAddr string, socksPort int, username, password string, de
 
 	// 启动本地SOCKS5代理
 	debugLog("开始启动本地SOCKS5代理服务器，监听端口: %d", socksPort)
-	socksListener, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", socksPort))
+	socksListener, err := net.Listen("tcp", socksListenAddr)
 	if err != nil {
 		debugLog("启动本地SOCKS5代理失败: %v", err)
 		return fmt.Errorf("启动本地SOCKS5代理失败: %v", err)
 	}
-	debugLog("本地SOCKS5代理服务器启动成功，监听端口: %d", socksPort)
+	debugLog("本地SOCKS5代理服务器启动成功，监听地址: %s", socksListenAddr)
 
 	// 创建一个通道用于通知SOCKS5代理服务停止
 	stopChan := make(chan struct{})
@@ -226,6 +237,17 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 		}
 		targetAddr = string(domainBuf)
 		debugLog("解析域名: %s", targetAddr)
+	case 0x04: // IPv6
+		debugLog("开始读取IPv6地址")
+		ipBuf := make([]byte, net.IPv6len)
+		_, err := io.ReadFull(stream, ipBuf)
+		if err != nil {
+			debugLog("读取IPv6地址失败: %v", err)
+			log.Printf("读取IPv6地址失败: %v", err)
+			return
+		}
+		targetAddr = net.IP(ipBuf).String()
+		debugLog("解析IPv6地址: %s", targetAddr)
 	default:
 		debugLog("不支持的地址类型: %d", addrType)
 		log.Printf("不支持的地址类型: %d", addrType)
@@ -245,7 +267,7 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	debugLog("解析端口: %d", port)
 
 	// 组合完整的目标地址
-	fullTargetAddr := fmt.Sprintf("%s:%d", targetAddr, port)
+	fullTargetAddr := net.JoinHostPort(targetAddr, fmt.Sprintf("%d", port))
 	debugLog("完整目标地址: %s", fullTargetAddr)
 
 	// 连接到目标地址
@@ -318,98 +340,90 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 	defer localConn.Close()
 	debugLog("开始处理本地SOCKS5连接请求")
 
-	// 处理SOCKS5协议握手
-	// 1. 版本标识和认证方法选择
 	debugLog("开始处理SOCKS5协议握手")
-	handshakeBuf := make([]byte, 256)
-	n, err := localConn.Read(handshakeBuf)
+	header := make([]byte, 2)
+	_, err := io.ReadFull(localConn, header)
 	if err != nil {
 		debugLog("读取SOCKS5握手数据失败: %v", err)
 		return
 	}
 
-	// 检查版本号是否为5
-	if handshakeBuf[0] != 0x05 {
-		debugLog("不支持的SOCKS版本: %d", handshakeBuf[0])
+	if header[0] != 0x05 {
+		debugLog("不支持的SOCKS版本: %d", header[0])
 		return
 	}
 
-	// 协商认证方法
-	numMethods := handshakeBuf[1]
+	numMethods := int(header[1])
+	methods := make([]byte, numMethods)
+	_, err = io.ReadFull(localConn, methods)
+	if err != nil {
+		debugLog("读取SOCKS5认证方法失败: %v", err)
+		return
+	}
 	debugLog("客户端支持的认证方法数量: %d", numMethods)
 
-	// 如果提供了用户名和密码，使用用户名密码认证
 	if username != "" && password != "" {
 		debugLog("使用用户名密码认证")
-		// 检查客户端是否支持用户名密码认证(0x02)
 		hasUserPassMethod := false
-		for i := 2; i < 2+int(numMethods); i++ {
-			if handshakeBuf[i] == 0x02 {
+		for _, method := range methods {
+			if method == 0x02 {
 				hasUserPassMethod = true
 				break
 			}
 		}
-
-		if hasUserPassMethod {
-			// 选择用户名密码认证
-			debugLog("选择用户名密码认证")
-			_, err = localConn.Write([]byte{0x05, 0x02})
-			if err != nil {
-				debugLog("发送认证方法选择失败: %v", err)
-				return
-			}
-
-			// 处理用户名密码认证
+		if !hasUserPassMethod {
+			debugLog("客户端不支持用户名密码认证")
+			localConn.Write([]byte{0x05, 0xff})
+			return
+		}
+		debugLog("选择用户名密码认证")
+		_, err = localConn.Write([]byte{0x05, 0x02})
+		if err != nil {
+			debugLog("发送认证方法选择失败: %v", err)
+			return
+		}
 		debugLog("开始处理用户名密码认证")
-		authBuf := make([]byte, 256)
-		_, err := localConn.Read(authBuf)
+		authHeader := make([]byte, 2)
+		_, err := io.ReadFull(localConn, authHeader)
 		if err != nil {
 			debugLog("读取认证数据失败: %v", err)
 			return
 		}
-
-			// 检查认证版本
-			if authBuf[0] != 0x01 {
-				debugLog("不支持的认证版本: %d", authBuf[0])
-				// 发送认证失败响应
-				localConn.Write([]byte{0x01, 0x01})
-				return
-			}
-
-			// 提取用户名和密码
-			usernameLen := int(authBuf[1])
-			userBuf := authBuf[2 : 2+usernameLen]
-			passwordLen := int(authBuf[2+usernameLen])
-			passBuf := authBuf[3+usernameLen : 3+usernameLen+passwordLen]
-
-			debugLog("收到用户名: %s, 密码: %s", string(userBuf), string(passBuf))
-
-			// 验证用户名和密码
-			if string(userBuf) != username || string(passBuf) != password {
-				debugLog("用户名或密码验证失败")
-				// 发送认证失败响应
-				localConn.Write([]byte{0x01, 0x01})
-				return
-			}
-
-			// 发送认证成功响应
-			debugLog("用户名密码认证成功")
-			_, err = localConn.Write([]byte{0x01, 0x00})
-			if err != nil {
-				debugLog("发送认证成功响应失败: %v", err)
-				return
-			}
-		} else {
-			// 客户端不支持用户名密码认证，使用无认证
-			debugLog("客户端不支持用户名密码认证，使用无认证")
-			_, err = localConn.Write([]byte{0x05, 0x00})
-			if err != nil {
-				debugLog("发送认证方法选择失败: %v", err)
-				return
-			}
+		if authHeader[0] != 0x01 {
+			debugLog("不支持的认证版本: %d", authHeader[0])
+			localConn.Write([]byte{0x01, 0x01})
+			return
+		}
+		userBuf := make([]byte, int(authHeader[1]))
+		_, err = io.ReadFull(localConn, userBuf)
+		if err != nil {
+			debugLog("读取用户名失败: %v", err)
+			return
+		}
+		passLenBuf := make([]byte, 1)
+		_, err = io.ReadFull(localConn, passLenBuf)
+		if err != nil {
+			debugLog("读取密码长度失败: %v", err)
+			return
+		}
+		passBuf := make([]byte, int(passLenBuf[0]))
+		_, err = io.ReadFull(localConn, passBuf)
+		if err != nil {
+			debugLog("读取密码失败: %v", err)
+			return
+		}
+		if string(userBuf) != username || string(passBuf) != password {
+			debugLog("用户名或密码验证失败")
+			localConn.Write([]byte{0x01, 0x01})
+			return
+		}
+		debugLog("用户名密码认证成功")
+		_, err = localConn.Write([]byte{0x01, 0x00})
+		if err != nil {
+			debugLog("发送认证成功响应失败: %v", err)
+			return
 		}
 	} else {
-		// 不需要认证，使用无认证方法(0x00)
 		debugLog("使用无认证")
 		_, err = localConn.Write([]byte{0x05, 0x00})
 		if err != nil {
@@ -418,79 +432,73 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 		}
 	}
 
-	// 2. 处理客户端的连接请求
 	debugLog("开始处理客户端的连接请求")
-	reqBuf := make([]byte, 256)
-	n, err = localConn.Read(reqBuf)
+	reqHeader := make([]byte, 4)
+	_, err = io.ReadFull(localConn, reqHeader)
 	if err != nil {
 		debugLog("读取SOCKS5请求数据失败: %v", err)
 		return
 	}
 
-	// 检查版本号
-	if reqBuf[0] != 0x05 {
-		debugLog("不支持的SOCKS版本: %d", reqBuf[0])
+	if reqHeader[0] != 0x05 {
+		debugLog("不支持的SOCKS版本: %d", reqHeader[0])
 		return
 	}
 
-	// 检查命令类型，只支持CONNECT命令(0x01)
-	if reqBuf[1] != 0x01 {
-		debugLog("不支持的SOCKS命令: %d", reqBuf[1])
-		// 发送命令不支持响应
-		localConn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	if reqHeader[1] != 0x01 {
+		debugLog("不支持的SOCKS命令: %d", reqHeader[1])
+		writeSocksReply(localConn, 0x07)
 		return
 	}
 
-	// 解析目标地址
 	debugLog("开始解析目标地址")
-	addrType := reqBuf[3]
+	addrType := reqHeader[3]
 	var targetAddr string
 	var port int
-	var offset int = 4
 
 	switch addrType {
 	case 0x01: // IPv4地址
 		debugLog("解析IPv4地址")
-		if n < offset+4+2 { // 地址4字节 + 端口2字节
-			debugLog("IPv4地址数据不完整")
+		ipBuf := make([]byte, net.IPv4len)
+		if _, err = io.ReadFull(localConn, ipBuf); err != nil {
+			debugLog("读取IPv4地址失败: %v", err)
 			return
 		}
-		ip := net.IPv4(reqBuf[offset], reqBuf[offset+1], reqBuf[offset+2], reqBuf[offset+3])
-		targetAddr = ip.String()
-		offset += 4
+		targetAddr = net.IP(ipBuf).String()
 	case 0x03: // 域名
 		debugLog("解析域名")
-		if n < offset+1 { // 域名长度1字节
-			debugLog("域名数据不完整")
+		lenBuf := make([]byte, 1)
+		if _, err = io.ReadFull(localConn, lenBuf); err != nil {
+			debugLog("读取域名长度失败: %v", err)
 			return
 		}
-		domainLen := int(reqBuf[offset])
-		offset += 1
-		if n < offset+domainLen+2 { // 域名 + 端口2字节
-			debugLog("域名数据不完整")
+		domainBuf := make([]byte, int(lenBuf[0]))
+		if _, err = io.ReadFull(localConn, domainBuf); err != nil {
+			debugLog("读取域名失败: %v", err)
 			return
 		}
-		targetAddr = string(reqBuf[offset : offset+domainLen])
-		offset += domainLen
+		targetAddr = string(domainBuf)
 	case 0x04: // IPv6地址
 		debugLog("解析IPv6地址")
-		if n < offset+16+2 { // 地址16字节 + 端口2字节
-			debugLog("IPv6地址数据不完整")
+		ipBuf := make([]byte, net.IPv6len)
+		if _, err = io.ReadFull(localConn, ipBuf); err != nil {
+			debugLog("读取IPv6地址失败: %v", err)
 			return
 		}
-		ip := net.IP(reqBuf[offset : offset+16])
-		targetAddr = ip.String()
-		offset += 16
+		targetAddr = net.IP(ipBuf).String()
 	default:
 		debugLog("不支持的地址类型: %d", addrType)
-		// 发送地址类型不支持响应
-		localConn.Write([]byte{0x05, 0x08, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		writeSocksReply(localConn, 0x08)
 		return
 	}
 
-	// 解析端口
-	port = int(reqBuf[offset])<<8 + int(reqBuf[offset+1])
-	fullTargetAddr := fmt.Sprintf("%s:%d", targetAddr, port)
+	portBuf := make([]byte, 2)
+	if _, err = io.ReadFull(localConn, portBuf); err != nil {
+		debugLog("读取端口失败: %v", err)
+		return
+	}
+	port = int(portBuf[0])<<8 + int(portBuf[1])
+	fullTargetAddr := net.JoinHostPort(targetAddr, fmt.Sprintf("%d", port))
 	debugLog("解析出的完整目标地址: %s", fullTargetAddr)
 
 	// 3. 创建到服务器的Yamux流
@@ -498,8 +506,7 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 	stream, err := session.Open()
 	if err != nil {
 		debugLog("创建Yamux流失败: %v", err)
-		// 发送网络不可达响应
-		localConn.Write([]byte{0x05, 0x03, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		writeSocksReply(localConn, 0x03)
 		return
 	}
 	defer stream.Close()
@@ -557,22 +564,18 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 	_, err = io.ReadFull(stream, confirmBuf)
 	if err != nil {
 		debugLog("读取连接确认失败: %v", err)
-		// 发送连接失败响应
-		localConn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		writeSocksReply(localConn, 0x01)
 		return
 	}
 
 	if confirmBuf[0] != 0x01 {
 		debugLog("服务器连接目标失败")
-		// 发送连接失败响应
-		localConn.Write([]byte{0x05, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+		writeSocksReply(localConn, 0x01)
 		return
 	}
 
-	// 6. 发送SOCKS5连接成功响应
 	debugLog("发送SOCKS5连接成功响应")
-	// 响应格式: 版本(0x05), 状态(0x00成功), RSV(0x00), 地址类型(0x01), 绑定地址, 绑定端口
-	localConn.Write([]byte{0x05, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+	writeSocksReply(localConn, 0x00)
 
 	// 7. 建立双向数据传输
 	debugLog("开始建立双向数据传输")
@@ -589,6 +592,9 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 		if err != nil && err != io.EOF {
 			debugLog("本地连接到服务器流数据传输失败: %v", err)
 		}
+		if yamuxStream, ok := stream.(*yamux.Stream); ok {
+			yamuxStream.Close()
+		}
 		debugLog("本地连接到服务器流数据传输完成")
 	}()
 
@@ -600,10 +606,29 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 		if err != nil && err != io.EOF {
 			debugLog("服务器流到本地连接数据传输失败: %v", err)
 		}
+		if tcpConn, ok := localConn.(*net.TCPConn); ok {
+			tcpConn.CloseWrite()
+		}
 		debugLog("服务器流到本地连接数据传输完成")
 	}()
 
 	// 等待数据传输完成
 	wg.Wait()
 	debugLog("本地SOCKS5连接请求处理完成")
+}
+
+func writeSocksReply(conn net.Conn, rep byte) {
+	_, _ = conn.Write([]byte{0x05, rep, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00})
+}
+
+func verifyPeerCertificate(rawCerts [][]byte, roots *x509.CertPool) error {
+	if len(rawCerts) == 0 {
+		return fmt.Errorf("peer did not provide a certificate")
+	}
+	cert, err := x509.ParseCertificate(rawCerts[0])
+	if err != nil {
+		return err
+	}
+	_, err = cert.Verify(x509.VerifyOptions{Roots: roots})
+	return err
 }

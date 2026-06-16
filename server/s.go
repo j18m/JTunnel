@@ -80,11 +80,11 @@ func StartServer(listenAddr string, debugMode bool, timeout int) error {
 			continue
 		}
 		debugLog("接受新的TLS连接: %s", conn.RemoteAddr().String())
-		go handleClientConnection(conn.(*tls.Conn), debugLog)
+		go handleClientConnection(conn.(*tls.Conn), debugLog, timeout)
 	}
 }
 
-func handleClientConnection(conn *tls.Conn, debugLog func(format string, args ...interface{})) {
+func handleClientConnection(conn *tls.Conn, debugLog func(format string, args ...interface{}), timeout int) {
 	defer conn.Close()
 
 	// 创建yamux会话，增加超时时间
@@ -140,7 +140,7 @@ func handleClientConnection(conn *tls.Conn, debugLog func(format string, args ..
 		// 启动goroutine处理每个流请求
 		go func(stream net.Conn) {
 			defer stream.Close()
-			handleClientStream(stream, debugLog)
+			handleClientStream(stream, debugLog, timeout)
 		}(stream)
 	}
 
@@ -343,7 +343,7 @@ func handleSocks5Connection(socksConn net.Conn, session *yamux.Session, config S
 	debugLog("SOCKS5连接处理完成")
 }
 
-func handleClientStream(stream net.Conn, debugLog func(format string, args ...interface{})) {
+func handleClientStream(stream net.Conn, debugLog func(format string, args ...interface{}), timeout int) {
 	defer stream.Close()
 	debugLog("服务端收到新的流请求")
 
@@ -430,12 +430,12 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	debugLog("解析端口: %d", port)
 
 	// 组合完整的目标地址
-	fullTargetAddr := fmt.Sprintf("%s:%d", targetAddr, port)
+	fullTargetAddr := net.JoinHostPort(targetAddr, fmt.Sprintf("%d", port))
 	debugLog("完整目标地址: %s", fullTargetAddr)
 
 	// 连接到目标地址
 	debugLog("开始连接目标地址: %s", fullTargetAddr)
-	targetConn, err := net.Dial("tcp", fullTargetAddr)
+	targetConn, err := net.DialTimeout("tcp", fullTargetAddr, time.Duration(timeout)*time.Second)
 	if err != nil {
 		debugLog("连接目标地址失败: %s, error: %v", fullTargetAddr, err)
 		log.Printf("连接目标地址失败: %s, error: %v", fullTargetAddr, err)
@@ -580,7 +580,7 @@ func getTargetAddress(conn net.Conn) (string, byte, error) {
 	// 读取目标地址
 	var addr string
 	atyp := buf[3]
-	
+
 	// 先读取地址部分
 	switch atyp {
 	case 0x01: // IPv4
@@ -597,7 +597,7 @@ func getTargetAddress(conn net.Conn) (string, byte, error) {
 			return "", 0, err
 		}
 		addrLen := int(buf[0])
-		
+
 		// 读取域名
 		_, err = io.ReadFull(conn, buf[:addrLen])
 		if err != nil {

@@ -8,9 +8,15 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "Jtunnel",
-	Short: "Jtunnel run",
-	Long:  "Jtunnel run test",
+	Use:          "jtunnel",
+	Short:        "A small mTLS tunnel with local SOCKS5 proxy support",
+	SilenceUsage: true,
+	Long: `JTunnel provides a local SOCKS5 proxy over an mTLS-protected yamux tunnel.
+
+Common usage:
+  jtunnel server -l :23336
+  jtunnel client example.com:23336 -l 127.0.0.1:1080
+  jtunnel relay -l :23337 -n example.com:23336`,
 }
 
 func RunJtunnel() {

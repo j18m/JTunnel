@@ -1,0 +1,12 @@
+.DS_Store
+.idea/
+
+# Build outputs
+jtunnel
+jtunnel-*
+*.exe
+
+# Go test/build artifacts
+.cache/
+*.test
+coverage.out
