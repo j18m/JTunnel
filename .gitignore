@@ -1,12 +1,38 @@
 .DS_Store
 .idea/
+.vscode/
+*.swp
+*~
 
 # Build outputs
-jtunnel
-jtunnel-*
+/JTunnel
+/jtunnel
+/JTunnel-*
+/jtunnel-*
+/bin/
+/build/
+/dist/
+/release/
 *.exe
+*.dll
+*.so
+*.dylib
+*.zip
+*.tar
+*.tar.gz
+*.tgz
 
 # Go test/build artifacts
 .cache/
 *.test
+*.out
+*.coverprofile
+*.prof
+*.pprof
+*.trace
 coverage.out
+coverage.html
+
+# Runtime files
+*.log
+*.pid
