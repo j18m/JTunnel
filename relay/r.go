@@ -260,9 +260,6 @@ func handleRelayConnection(conn *tls.Conn, nextAddr string, tlsConfig *tls.Confi
 				defer upperStream.Close()
 				defer lowerStream.Close()
 
-				// 使用缓冲提高性能
-				copyBuf := make([]byte, 32*1024)
-
 				// 使用WaitGroup等待两个方向的数据传输完成
 				var wg sync.WaitGroup
 				wg.Add(2)
@@ -272,7 +269,7 @@ func handleRelayConnection(conn *tls.Conn, nextAddr string, tlsConfig *tls.Confi
 				go func() {
 					defer wg.Done()
 					debugLog("开始从下一个节点到上一个节点的数据传输")
-					bytesCopied, err := io.CopyBuffer(upperStream, lowerStream, copyBuf)
+					bytesCopied, err := io.CopyBuffer(upperStream, lowerStream, make([]byte, 32*1024))
 					if err != nil && err != io.EOF {
 						debugLog("从下一个节点到上一个节点传输数据失败: %v", err)
 						log.Printf("从下一个节点到上一个节点传输数据失败: %v", err)
@@ -290,7 +287,7 @@ func handleRelayConnection(conn *tls.Conn, nextAddr string, tlsConfig *tls.Confi
 				go func() {
 					defer wg.Done()
 					debugLog("开始从上一个节点到下一个节点的数据传输")
-					bytesCopied, err := io.CopyBuffer(lowerStream, upperStream, copyBuf)
+					bytesCopied, err := io.CopyBuffer(lowerStream, upperStream, make([]byte, 32*1024))
 					if err != nil && err != io.EOF {
 						debugLog("从上一个节点到下一个节点传输数据失败: %v", err)
 						log.Printf("从上一个节点到下一个节点传输数据失败: %v", err)
@@ -391,9 +388,7 @@ func forwardStream(stream net.Conn, nextSession *yamux.Session, debugLog func(fo
 	defer nextStream.Close()
 	debugLog("打开到下一个节点的流成功")
 
-	// 使用缓冲提高性能
-	copyBuf := make([]byte, 32*1024)
-	debugLog("数据传输缓冲区大小: %d字节", len(copyBuf))
+	debugLog("数据传输缓冲区大小: %d字节", 32*1024)
 
 	// 使用WaitGroup等待两个方向的数据传输完成
 	var wg sync.WaitGroup
@@ -404,7 +399,7 @@ func forwardStream(stream net.Conn, nextSession *yamux.Session, debugLog func(fo
 	go func() {
 		defer wg.Done()
 		debugLog("开始从上一个节点到下一个节点的数据传输")
-		bytesCopied, err := io.CopyBuffer(nextStream, stream, copyBuf)
+		bytesCopied, err := io.CopyBuffer(nextStream, stream, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("从上一个节点到下一个节点传输数据失败: %v", err)
 			log.Printf("从上一个节点到下一个节点传输数据失败: %v", err)
@@ -422,7 +417,7 @@ func forwardStream(stream net.Conn, nextSession *yamux.Session, debugLog func(fo
 	go func() {
 		defer wg.Done()
 		debugLog("开始从下一个节点到上一个节点的数据传输")
-		bytesCopied, err := io.CopyBuffer(stream, nextStream, copyBuf)
+		bytesCopied, err := io.CopyBuffer(stream, nextStream, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("从下一个节点到上一个节点传输数据失败: %v", err)
 			log.Printf("从下一个节点到上一个节点传输数据失败: %v", err)

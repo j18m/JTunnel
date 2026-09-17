@@ -35,6 +35,9 @@ func StartClient(serverAddr string, socksListenAddr string, username, password s
 		debugLog("服务器地址不能为空")
 		return fmt.Errorf("必须指定服务器地址")
 	}
+	if (username == "") != (password == "") {
+		return fmt.Errorf("SOCKS5 认证用户名和密码必须同时指定")
+	}
 	_, portStr, err := net.SplitHostPort(socksListenAddr)
 	if err != nil {
 		return fmt.Errorf("本地SOCKS5监听地址无效: %w", err)
@@ -134,6 +137,7 @@ func StartClient(serverAddr string, socksListenAddr string, username, password s
 		debugLog("启动本地SOCKS5代理失败: %v", err)
 		return fmt.Errorf("启动本地SOCKS5代理失败: %v", err)
 	}
+	defer socksListener.Close()
 	debugLog("本地SOCKS5代理服务器启动成功，监听地址: %s", socksListenAddr)
 
 	// 创建一个通道用于通知SOCKS5代理服务停止
@@ -293,8 +297,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 
 	// 使用缓冲提高性能
 	debugLog("开始全双工数据传输")
-	copyBuf := make([]byte, 32*1024)
-
 	// 使用WaitGroup等待两个方向的数据传输完成
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -303,7 +305,7 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	go func() {
 		defer wg.Done()
 		debugLog("启动stream到targetConn的数据传输")
-		_, err := io.CopyBuffer(targetConn, stream, copyBuf)
+		_, err := io.CopyBuffer(targetConn, stream, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("从stream到targetConn传输数据失败: %v", err)
 			log.Printf("从stream到targetConn传输数据失败: %v", err)
@@ -319,7 +321,7 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	go func() {
 		defer wg.Done()
 		debugLog("启动targetConn到stream的数据传输")
-		_, err := io.CopyBuffer(stream, targetConn, copyBuf)
+		_, err := io.CopyBuffer(stream, targetConn, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("从targetConn到stream传输数据失败: %v", err)
 			log.Printf("从targetConn到stream传输数据失败: %v", err)
@@ -339,6 +341,11 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, username, password string, debugLog func(format string, args ...interface{}), timeout int) {
 	defer localConn.Close()
 	debugLog("开始处理本地SOCKS5连接请求")
+	if timeout > 0 {
+		if err := localConn.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second)); err != nil {
+			debugLog("设置SOCKS5握手超时失败: %v", err)
+		}
+	}
 
 	debugLog("开始处理SOCKS5协议握手")
 	header := make([]byte, 2)
@@ -362,7 +369,7 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 	}
 	debugLog("客户端支持的认证方法数量: %d", numMethods)
 
-	if username != "" && password != "" {
+	if username != "" {
 		debugLog("使用用户名密码认证")
 		hasUserPassMethod := false
 		for _, method := range methods {
@@ -425,6 +432,18 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 		}
 	} else {
 		debugLog("使用无认证")
+		hasNoAuthMethod := false
+		for _, method := range methods {
+			if method == 0x00 {
+				hasNoAuthMethod = true
+				break
+			}
+		}
+		if !hasNoAuthMethod {
+			debugLog("客户端不支持无认证方式")
+			_, _ = localConn.Write([]byte{0x05, 0xff})
+			return
+		}
 		_, err = localConn.Write([]byte{0x05, 0x00})
 		if err != nil {
 			debugLog("发送认证方法选择失败: %v", err)
@@ -511,6 +530,11 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 	}
 	defer stream.Close()
 	debugLog("Yamux流创建成功")
+	if timeout > 0 {
+		if err := stream.SetDeadline(time.Now().Add(time.Duration(timeout) * time.Second)); err != nil {
+			debugLog("设置隧道请求超时失败: %v", err)
+		}
+	}
 
 	// 4. 通过Yamux流将目标地址发送到服务器
 	debugLog("开始将目标地址发送到服务器")
@@ -576,10 +600,15 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 
 	debugLog("发送SOCKS5连接成功响应")
 	writeSocksReply(localConn, 0x00)
+	if err := localConn.SetDeadline(time.Time{}); err != nil {
+		debugLog("清除SOCKS5连接超时失败: %v", err)
+	}
+	if err := stream.SetDeadline(time.Time{}); err != nil {
+		debugLog("清除隧道流超时失败: %v", err)
+	}
 
 	// 7. 建立双向数据传输
 	debugLog("开始建立双向数据传输")
-	copyBuf := make([]byte, 32*1024)
 
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -588,7 +617,7 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 	go func() {
 		defer wg.Done()
 		debugLog("启动本地连接到服务器流的数据传输")
-		_, err := io.CopyBuffer(stream, localConn, copyBuf)
+		_, err := io.CopyBuffer(stream, localConn, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("本地连接到服务器流数据传输失败: %v", err)
 		}
@@ -602,7 +631,7 @@ func handleLocalSocksRequest(localConn net.Conn, session *yamux.Session, usernam
 	go func() {
 		defer wg.Done()
 		debugLog("启动服务器流到本地连接的数据传输")
-		_, err := io.CopyBuffer(localConn, stream, copyBuf)
+		_, err := io.CopyBuffer(localConn, stream, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("服务器流到本地连接数据传输失败: %v", err)
 		}

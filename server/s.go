@@ -287,9 +287,6 @@ func handleSocks5Connection(socksConn net.Conn, session *yamux.Session, config S
 	}
 	debugLog("客户端连接确认成功")
 
-	// 使用缓冲提高性能
-	copyBuf := make([]byte, 32*1024)
-
 	// 使用WaitGroup等待两个方向的数据传输完成
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -297,7 +294,7 @@ func handleSocks5Connection(socksConn net.Conn, session *yamux.Session, config S
 	// 从stream到socksConn的全双工传输
 	go func() {
 		defer wg.Done()
-		_, err := io.CopyBuffer(socksConn, stream, copyBuf)
+		_, err := io.CopyBuffer(socksConn, stream, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			// 检查是否是连接重置错误（客户端正常关闭连接）
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -319,7 +316,7 @@ func handleSocks5Connection(socksConn net.Conn, session *yamux.Session, config S
 	// 从socksConn到stream的全双工传输
 	go func() {
 		defer wg.Done()
-		_, err := io.CopyBuffer(stream, socksConn, copyBuf)
+		_, err := io.CopyBuffer(stream, socksConn, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			// 检查是否是连接重置错误（客户端正常关闭连接）
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -439,6 +436,7 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	if err != nil {
 		debugLog("连接目标地址失败: %s, error: %v", fullTargetAddr, err)
 		log.Printf("连接目标地址失败: %s, error: %v", fullTargetAddr, err)
+		_, _ = stream.Write([]byte{0x00})
 		return
 	}
 	defer targetConn.Close()
@@ -456,8 +454,6 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 
 	// 使用缓冲提高性能
 	debugLog("开始全双工数据传输")
-	copyBuf := make([]byte, 32*1024)
-
 	// 使用WaitGroup等待两个方向的数据传输完成
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -466,7 +462,7 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	go func() {
 		defer wg.Done()
 		debugLog("启动stream到targetConn的数据传输")
-		_, err := io.CopyBuffer(targetConn, stream, copyBuf)
+		_, err := io.CopyBuffer(targetConn, stream, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("从stream到targetConn传输数据失败: %v", err)
 			log.Printf("从stream到targetConn传输数据失败: %v", err)
@@ -482,7 +478,7 @@ func handleClientStream(stream net.Conn, debugLog func(format string, args ...in
 	go func() {
 		defer wg.Done()
 		debugLog("启动targetConn到stream的数据传输")
-		_, err := io.CopyBuffer(stream, targetConn, copyBuf)
+		_, err := io.CopyBuffer(stream, targetConn, make([]byte, 32*1024))
 		if err != nil && err != io.EOF {
 			debugLog("从targetConn到stream传输数据失败: %v", err)
 			log.Printf("从targetConn到stream传输数据失败: %v", err)

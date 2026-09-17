@@ -39,6 +39,9 @@ var ClientCmd = &cobra.Command{
 		if serverAddr == "" {
 			return fmt.Errorf("服务器地址不能为空")
 		}
+		if (username == "") != (password == "") {
+			return fmt.Errorf("SOCKS5 认证用户名和密码必须同时指定")
+		}
 		if socksPort > 0 {
 			socksListenAddr = net.JoinHostPort("127.0.0.1", strconv.Itoa(socksPort))
 		}
@@ -58,6 +61,7 @@ var ClientCmd = &cobra.Command{
 func init() {
 	ClientCmd.Flags().StringVarP(&serverAddr, "server", "s", "", "JTunnel服务器地址 (兼容旧参数，建议使用位置参数)")
 	ClientCmd.Flags().StringVarP(&socksListenAddr, "listen", "l", "127.0.0.1:1080", "本地SOCKS5监听地址 (格式: host:port)")
+	ClientCmd.Flags().StringVar(&socksListenAddr, "socks5-listen", "127.0.0.1:1080", "SOCKS5代理监听地址 (格式: host:port)")
 	ClientCmd.Flags().IntVar(&socksPort, "socks-port", 0, "本地SOCKS5代理端口 (兼容旧参数，建议使用 --listen)")
 	ClientCmd.Flags().StringVarP(&username, "username", "u", "", "认证用户名")
 	ClientCmd.Flags().StringVarP(&password, "password", "p", "", "认证密码")
